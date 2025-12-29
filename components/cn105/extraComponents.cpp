@@ -38,39 +38,34 @@ void CN105Climate::set_vertical_vane_select(
 
 void CN105Climate::set_horizontal_vane_select(
     VaneOrientationSelect* horizontal_vane_select, const std::vector<std::string>& options) {
-    this->horizontal_vane_select_ = horizontal_vane_select;
+  this->horizontal_vane_select_ = horizontal_vane_select;
 
-    // Use provided options if not empty, and filter out any options that are not in WIDEVANE_MAP to ensure validity,
-    // otherwise use all options from WIDEVANE_MAP
-    if (!options.empty()) {
-        this->horizontal_vane_options_strings_.clear();
-        for (const auto& option : options) {
-            if (std::find(std::begin(WIDEVANE_MAP), std::end(WIDEVANE_MAP), option) != std::end(WIDEVANE_MAP)) {
-                this->horizontal_vane_options_strings_.push_back(option);
-            }
-        }
-    } else {
-        this->horizontal_vane_options_strings_.assign(std::begin(WIDEVANE_MAP), std::end(WIDEVANE_MAP));
+  // Use provided options if not empty, and filter out any options that are not in WIDEVANE_MAP to ensure validity,
+  // otherwise use all options from WIDEVANE_MAP
+  if (!options.empty()) {
+    this->horizontal_vane_options_strings_.clear();
+    for (const auto& option : options) {
+      if (std::find(std::begin(WIDEVANE_MAP), std::end(WIDEVANE_MAP), option) != std::end(WIDEVANE_MAP)) {
+        this->horizontal_vane_options_strings_.push_back(option);
+      }
     }
+  } else {
+    this->horizontal_vane_options_strings_.assign(std::begin(WIDEVANE_MAP), std::end(WIDEVANE_MAP));
+  }
 
-    // Build FixedVector of const char* for set_options
-    FixedVector<const char*> fixedOptions;
-    fixedOptions.init(this->horizontal_vane_options_strings_.size());
-    for (const auto& str : this->horizontal_vane_options_strings_) {
-        fixedOptions.push_back(str.c_str());
-    }
-    this->horizontal_vane_select_->traits.set_options(fixedOptions);
+  // ✅ ESPHome-compatible: set_options takes vector<string>
+  this->horizontal_vane_select_->traits.set_options(this->horizontal_vane_options_strings_);
 
-    this->horizontal_vane_select_->setCallbackFunction([this](const char* setting) {
-        ESP_LOGD("EVT", "wideVane.control() -> Demande un chgt de réglage de la wideVane: %s", setting);
+  this->horizontal_vane_select_->setCallbackFunction([this](const char* setting) {
+    ESP_LOGD("EVT", "wideVane.control() -> Demande un chgt de réglage de la wideVane: %s", setting);
 
-        this->setWideVaneSetting(setting);
-        this->wantedSettings.hasChanged = true;
-        this->wantedSettings.hasBeenSent = false;
-        this->wantedSettings.lastChange = CUSTOM_MILLIS;
-        });
-
+    this->setWideVaneSetting(setting);
+    this->wantedSettings.hasChanged = true;
+    this->wantedSettings.hasBeenSent = false;
+    this->wantedSettings.lastChange = CUSTOM_MILLIS;
+  });
 }
+
 
 void CN105Climate::set_airflow_control_select(
     VaneOrientationSelect* airflow_control_select) {

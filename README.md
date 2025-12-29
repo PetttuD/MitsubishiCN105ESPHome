@@ -1010,5 +1010,8 @@ Refer to these for further understanding:
 - [ESPHome External Components](https://esphome.io/components/external_components.html)
 - [ESPHome's Climate Component Source](https://github.com/esphome/esphome/tree/master/esphome/components/climate)
 
+This is a test/modification using chatgpt advice and ESP32-S3-N16R8 (double usb) card form china. Got it working though had to use pins 4 and 5 for rx tx pins. 
+
+
 ---
 ```

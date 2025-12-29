@@ -381,7 +381,7 @@ def to_code(config):
             cg.add(traits.add_feature_flags(dual_flag))
         else:
             # S'assure que le flag est désactivé si l'option YAML est à False
-            cg.add(traits.clear_feature_flags(dual_flag))
+            cg.add(traits.set_supports_two_point_target_temperature(bool(supports.get(CONF_DUAL_SETPOINTS, False))))
         for fan_mode_str in supports.get(CONF_FAN_MODE, DEFAULT_FAN_MODES):
             if fan_mode_str in climate.CLIMATE_FAN_MODES:
                 cg.add(

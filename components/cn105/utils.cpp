@@ -59,7 +59,7 @@ float CN105Climate::calculateTemperatureSetting(float setting) {
  */
 
 void CN105Climate::updateTargetTemperaturesFromSettings(float temperature) {
-    if (this->traits().has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+    if (this->traits().get_supports_two_point_target_temperature()) {
 
         if (this->mode == climate::CLIMATE_MODE_HEAT) {
             this->setTargetTemperatureLow(temperature);

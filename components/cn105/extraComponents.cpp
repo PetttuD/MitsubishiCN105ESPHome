@@ -1,6 +1,7 @@
 #include "cn105.h"
 #include <algorithm>
 #include <esphome/core/helpers.h>
+#include "esphome/core/helpers.h"
 
 using namespace esphome;
 

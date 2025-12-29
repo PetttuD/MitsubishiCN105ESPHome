@@ -182,7 +182,7 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
         temp_single = this->fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(*call.get_target_temperature());
     }
 
-    if (this->traits_.has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+    if (this->traits_.get_supports_cool_target_temperature() && this->traits_.get_supports_heat_target_temperature() {
         ESP_LOGD("control", "Processing with dual setpoint support...");
         if (call.get_target_temperature_low().has_value() && call.get_target_temperature_high().has_value()) {
             this->handleDualSetpointBoth(temp_low, temp_high);
@@ -354,13 +354,13 @@ void CN105Climate::controlTemperature() {
 
 
     // Utiliser la logique appropriée selon les traits
-    if (this->traits_.has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+    if (this->traits_.get_supports_cool_target_temperature() &&this->traits_.get_supports_heat_target_temperature()) {
         this->sanitizeDualSetpoints();
         // Dual setpoint : choisir la bonne consigne selon le mode
         switch (this->mode) {
         case climate::CLIMATE_MODE_AUTO:
 
-            if (this->traits_.has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+            if (this->traits_.get_supports_cool_target_temperature() &&this->traits_.get_supports_heat_target_temperature())) {
                 if ((!std::isnan(currentSettings.temperature)) && (currentSettings.temperature > 0)) {
                     this->setTargetTemperatureLow(currentSettings.temperature - 2.0f);
                     this->setTargetTemperatureHigh(currentSettings.temperature + 2.0f);
@@ -393,7 +393,7 @@ void CN105Climate::controlTemperature() {
             break;
         default:
             // Other modes : use median temperature
-            if (this->traits_.has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+            if (this->traits_.get_supports_cool_target_temperature() &&this->traits_.get_supports_heat_target_temperature()) {
                 setting = (this->getTargetTemperatureLow() + this->getTargetTemperatureHigh()) / 2.0f;
             } else {
                 setting = this->getTargetTemperature();

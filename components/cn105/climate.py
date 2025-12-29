@@ -373,12 +373,9 @@ def to_code(config):
         # Définir le support du dual setpoint via YAML (par défaut: False si absent)
         yaml_dual = supports.get(CONF_DUAL_SETPOINT, False)
         # Utilise directement la constante C++ via une RawExpression pour éviter d'aller la chercher côté Python
-        dual_flag = cg.RawExpression(
-            "climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE"
-        )
+
         if yaml_dual:
             # Active le flag de dual setpoint via l'API de feature flags (remplace l'appel déprécié)
-            cg.add(traits.add_feature_flags(dual_flag))
         else:
             # S'assure que le flag est désactivé si l'option YAML est à False
             cg.add(traits.set_supports_two_point_target_temperature(bool(supports.get(CONF_DUAL_SETPOINTS, False))))

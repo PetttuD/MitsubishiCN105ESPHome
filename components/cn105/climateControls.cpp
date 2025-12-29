@@ -9,7 +9,6 @@
 
 using namespace esphome;
 
-
 void CN105Climate::checkPendingWantedSettings() {
     long now = CUSTOM_MILLIS;
     if (!(this->wantedSettings.hasChanged) || (now - this->wantedSettings.lastChange < this->debounce_delay_)) {
@@ -40,6 +39,7 @@ void logCheckWantedSettingsMutex(wantedHeatpumpSettings& settings) {
     }
 
 }
+
 void CN105Climate::controlDelegate(const esphome::climate::ClimateCall& call) {
     ESP_LOGD("control", "espHome control() interface method called...");
     bool updated = false;
@@ -148,20 +148,9 @@ void CN105Climate::handleSingleTargetInAutoOrDry(float requested) {
 }
 
 bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall& call) {
-    // Vérifier si une température est fournie selon les traits
-    // En modes AUTO/DRY, accepter aussi target_temperature même en dual setpoint
+    // Accept any of: low/high/single (AUTO/DRY can send single even when using dual internally)
     bool tempHasValue = (call.get_target_temperature_low().has_value() ||
         call.get_target_temperature_high().has_value() || call.get_target_temperature().has_value());
-    /*
-    bool tempHasValue = this->traits_.get_supports_two_point_target_temperature() ?
-        (
-            call.get_target_temperature_low().has_value() ||
-            call.get_target_temperature_high().has_value() ||
-            ((this->mode == climate::CLIMATE_MODE_AUTO || this->mode == climate::CLIMATE_MODE_DRY) &&
-                call.get_target_temperature().has_value())
-            ) :
-        call.get_target_temperature().has_value();
-    */
 
     if (!tempHasValue) {
         return false;
@@ -182,7 +171,9 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
         temp_single = this->fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(*call.get_target_temperature());
     }
 
-    if (this->traits_.get_supports_cool_target_temperature() && this->traits_.get_supports_heat_target_temperature() {
+    // 🔧 FIX: has_feature_flags/CLIMATE_REQUIRES... is not available in your ESPHome build.
+    // Use the traits API that exists: supports two-point target temperature.
+    if (this->traits_.get_supports_two_point_target_temperature()) {
         ESP_LOGD("control", "Processing with dual setpoint support...");
         if (call.get_target_temperature_low().has_value() && call.get_target_temperature_high().has_value()) {
             this->handleDualSetpointBoth(temp_low, temp_high);
@@ -201,7 +192,6 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
             ESP_LOGI("control", "Setting heatpump setpoint : %.1f", this->getTargetTemperature());
         }
     }
-
 
     this->controlTemperature();
     ESP_LOGD("control", "controlled temperature to: %.1f", this->wantedSettings.temperature);
@@ -242,34 +232,21 @@ void CN105Climate::finalizeControlIfUpdated(bool updated) {
 }
 
 void CN105Climate::control(const esphome::climate::ClimateCall& call) {
-
 #ifdef USE_ESP32
     std::lock_guard<std::mutex> guard(wantedSettingsMutex);
     this->controlDelegate(call);
-#else    
+#else
     this->emulateMutex("CONTROL_WANTED_SETTINGS", std::bind(&CN105Climate::controlDelegate, this, call));
-#endif    
-
+#endif
 }
 
-
-/**
- * @brief Controls the swing modes based on user selection.
- *
- * This function handles the logic for CLIMATE_SWING_OFF, VERTICAL, HORIZONTAL, and BOTH.
- * It is designed to be safe for units that do not support horizontal swing (wideVane)
- * and provides an intuitive user experience by preserving static vane settings when possible.
- */
 void CN105Climate::controlSwing() {
-    // Check if horizontal vane (wideVane) is supported by this unit at the beginning.
     bool wideVaneSupported = this->traits_.supports_swing_mode(climate::CLIMATE_SWING_HORIZONTAL);
     bool vane_is_swing = (this->currentSettings.vane != nullptr) && (strcmp(this->currentSettings.vane, "SWING") == 0);
     bool wide_is_swing = (this->currentSettings.wideVane != nullptr) && (strcmp(this->currentSettings.wideVane, "SWING") == 0);
 
     switch (this->swing_mode) {
     case climate::CLIMATE_SWING_OFF:
-        // When swing is turned OFF, conditionally set vanes to a default static position.
-        // This only sets default position if swing was previously enabled
         if (vane_is_swing) {
             this->setVaneSetting("AUTO");
         }
@@ -279,33 +256,23 @@ void CN105Climate::controlSwing() {
         break;
 
     case climate::CLIMATE_SWING_VERTICAL:
-        // Turn on vertical swing.
         this->setVaneSetting("SWING");
-        // If horizontal swing was also on AND is supported, turn it off to a default static position.
-        // This correctly handles switching from BOTH to VERTICAL, while preserving any user's
-        // static horizontal setting if it wasn't swinging.
         if (wideVaneSupported && wide_is_swing) {
             this->setWideVaneSetting("|");
         }
         break;
 
     case climate::CLIMATE_SWING_HORIZONTAL:
-        // If vertical swing was on, turn it off to a default static position.
-        // This correctly handles switching from BOTH to HORIZONTAL, while preserving any user's
-        // static vertical setting if it wasn't swinging.
         if (vane_is_swing) {
             this->setVaneSetting("AUTO");
         }
-        // Turn on horizontal swing, but only if the unit supports it.
         if (wideVaneSupported) {
             this->setWideVaneSetting("SWING");
         }
         break;
 
     case climate::CLIMATE_SWING_BOTH:
-        // Turn on vertical swing.
         this->setVaneSetting("SWING");
-        // Turn on horizontal swing, but only if the unit supports it.
         if (wideVaneSupported) {
             this->setWideVaneSetting("SWING");
         }
@@ -316,8 +283,8 @@ void CN105Climate::controlSwing() {
         break;
     }
 }
-void CN105Climate::controlFan() {
 
+void CN105Climate::controlFan() {
     switch (this->fan_mode.value()) {
     case climate::CLIMATE_FAN_OFF:
         this->setPowerSetting("OFF");
@@ -348,52 +315,47 @@ void CN105Climate::controlFan() {
     }
 }
 
-
 void CN105Climate::controlTemperature() {
     float setting;
 
-
-    // Utiliser la logique appropriée selon les traits
-    if (this->traits_.get_supports_cool_target_temperature() &&this->traits_.get_supports_heat_target_temperature()) {
+    // 🔧 FIX: use two-point target support instead of has_feature_flags
+    if (this->traits_.get_supports_two_point_target_temperature()) {
         this->sanitizeDualSetpoints();
-        // Dual setpoint : choisir la bonne consigne selon le mode
+
         switch (this->mode) {
         case climate::CLIMATE_MODE_AUTO:
-
-            if (this->traits_.get_supports_cool_target_temperature() &&this->traits_.get_supports_heat_target_temperature())) {
+            if (this->traits_.get_supports_two_point_target_temperature()) {
                 if ((!std::isnan(currentSettings.temperature)) && (currentSettings.temperature > 0)) {
                     this->setTargetTemperatureLow(currentSettings.temperature - 2.0f);
                     this->setTargetTemperatureHigh(currentSettings.temperature + 2.0f);
                     ESP_LOGI("control", "Initializing AUTO mode temps from current PAC temp: %.1f -> [%.1f - %.1f]",
                         currentSettings.temperature, this->getTargetTemperatureLow(), this->getTargetTemperatureHigh());
-                    //this->publish_state();
                 }
                 setting = currentSettings.temperature;
                 ESP_LOGD("control", "AUTO mode : getting median temperature from current PAC temp: %.1f", setting);
             } else {
                 setting = this->getTargetTemperature();
             }
-
             break;
 
         case climate::CLIMATE_MODE_HEAT:
-            // Mode HEAT : using low target temperature
             setting = this->getTargetTemperatureLow();
             ESP_LOGD("control", "HEAT mode : getting temperature low:%1.f", this->getTargetTemperatureLow());
             break;
+
         case climate::CLIMATE_MODE_COOL:
-            // Mode COOL : using high target temperature
             setting = this->getTargetTemperatureHigh();
             ESP_LOGD("control", "COOL mode : getting temperature high:%1.f", this->getTargetTemperatureHigh());
             break;
+
         case climate::CLIMATE_MODE_DRY:
-            // Mode DRY : using high target temperature
             setting = this->getTargetTemperatureHigh();
-            ESP_LOGD("control", "COOL mode : getting temperature high:%1.f", this->getTargetTemperatureHigh());
+            ESP_LOGD("control", "DRY mode : getting temperature high:%1.f", this->getTargetTemperatureHigh());
             break;
+
         default:
             // Other modes : use median temperature
-            if (this->traits_.get_supports_cool_target_temperature() &&this->traits_.get_supports_heat_target_temperature()) {
+            if (this->traits_.get_supports_two_point_target_temperature()) {
                 setting = (this->getTargetTemperatureLow() + this->getTargetTemperatureHigh()) / 2.0f;
             } else {
                 setting = this->getTargetTemperature();
@@ -402,7 +364,6 @@ void CN105Climate::controlTemperature() {
             break;
         }
     } else {
-        // Single setpoint : utiliser target_temperature
         setting = this->getTargetTemperature();
     }
 
@@ -410,8 +371,6 @@ void CN105Climate::controlTemperature() {
     this->wantedSettings.temperature = setting;
     ESP_LOGI("control", "setting wanted temperature to %.1f", setting);
 }
-
-
 
 void CN105Climate::controlMode() {
     switch (this->mode) {
@@ -424,20 +383,16 @@ void CN105Climate::controlMode() {
         ESP_LOGI("control", "changing mode to HEAT");
         this->setModeSetting("HEAT");
         this->setPowerSetting("ON");
-
         break;
     case climate::CLIMATE_MODE_DRY:
         ESP_LOGI("control", "changing mode to DRY");
         this->setModeSetting("DRY");
         this->setPowerSetting("ON");
-
         break;
-
     case climate::CLIMATE_MODE_AUTO:
         ESP_LOGI("control", "changing mode to AUTO");
         this->setModeSetting("AUTO");
         this->setPowerSetting("ON");
-
         break;
     case climate::CLIMATE_MODE_FAN_ONLY:
         ESP_LOGI("control", "changing mode to FAN_ONLY");
@@ -453,10 +408,7 @@ void CN105Climate::controlMode() {
     }
 }
 
-
 void CN105Climate::setActionIfOperatingTo(climate::ClimateAction action_if_operating) {
-
-    // Determine if stage indicates activity (for fallback logic)
     bool stage_is_active = this->use_stage_for_operating_status_ &&
         this->currentSettings.stage != nullptr &&
         strcmp(this->currentSettings.stage, STAGE_MAP[0 /*IDLE*/]) != 0;
@@ -467,31 +419,19 @@ void CN105Climate::setActionIfOperatingTo(climate::ClimateAction action_if_opera
         getIfNotNull(this->currentSettings.stage, "N/A"),
         stage_is_active ? "yes" : "no");
 
-    // True fallback logic: operating OR (fallback enabled AND stage is active)
-    // This handles cases like 2-stage heating where compressor may be off but gas heating is active
     if (this->currentStatus.operating) {
-        // Primary: compressor is running
         this->action = action_if_operating;
         ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set by operating status (compressor running)");
     } else if (stage_is_active) {
-        // Fallback: compressor not running but stage indicates activity (e.g., gas heating)
         this->action = action_if_operating;
         ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set by stage fallback (stage: %s)", this->currentSettings.stage);
     } else {
-        // Neither operating nor stage indicates activity
         this->action = climate::CLIMATE_ACTION_IDLE;
         ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set to IDLE (no activity detected)");
     }
 }
 
-/**
- * Thanks to Bascht74 on issu #9 we know that the compressor frequency is not a good indicator of the heatpump being in operation
- * Because one can have multiple inside module for a single compressor.
- * Also, some heatpump does not support compressor frequency.
- * SO usage is deprecated.
-*/
 void CN105Climate::setActionIfOperatingAndCompressorIsActiveTo(climate::ClimateAction action) {
-
     ESP_LOGW(TAG, "Warning: the use of compressor frequency as an active indicator is deprecated. Please use operating status instead.");
 
     if (currentStatus.compressorFrequency <= 0) {
@@ -501,26 +441,24 @@ void CN105Climate::setActionIfOperatingAndCompressorIsActiveTo(climate::ClimateA
     }
 }
 
-//inside the below we could implement an internal only HEAT_COOL doing the math with an offset or something
 void CN105Climate::updateAction() {
     ESP_LOGV(TAG, "updating action back to espHome...");
-    if (this->traits().has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+
+    // 🔧 FIX: use two-point target support instead of has_feature_flags
+    if (this->traits().get_supports_two_point_target_temperature()) {
         this->sanitizeDualSetpoints();
     }
+
     switch (this->mode) {
     case climate::CLIMATE_MODE_HEAT:
-        //this->setActionIfOperatingAndCompressorIsActiveTo(climate::CLIMATE_ACTION_HEATING);       
         this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
         break;
     case climate::CLIMATE_MODE_COOL:
-        //this->setActionIfOperatingAndCompressorIsActiveTo(climate::CLIMATE_ACTION_COOLING);
         this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
         break;
     case climate::CLIMATE_MODE_AUTO:
-
         if (this->traits().supports_mode(climate::CLIMATE_MODE_HEAT) &&
             this->traits().supports_mode(climate::CLIMATE_MODE_COOL)) {
-            // If the unit supports both heating and cooling
             if (this->getCurrentTemperature() >= this->getTargetTemperatureHigh()) {
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
             } else if (this->getCurrentTemperature() <= this->getTargetTemperatureLow()) {
@@ -529,21 +467,15 @@ void CN105Climate::updateAction() {
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
             }
         } else if (this->traits().supports_mode(climate::CLIMATE_MODE_COOL)) {
-            // If the unit only supports cooling
             if (this->getCurrentTemperature() < this->getTargetTemperatureHigh()) {
-                // If the temperature meets or exceeds the target, switch to fan-only mode
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
             } else {
-                // Otherwise, continue cooling
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
             }
         } else if (this->traits().supports_mode(climate::CLIMATE_MODE_HEAT)) {
-            // If the unit only supports heating
             if (this->getCurrentTemperature() >= this->getTargetTemperatureLow()) {
-                // If the temperature meets or exceeds the target, switch to fan-only mode
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
             } else {
-                // Otherwise, continue heating
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
             }
         } else {
@@ -553,7 +485,6 @@ void CN105Climate::updateAction() {
         break;
 
     case climate::CLIMATE_MODE_DRY:
-        //this->setActionIfOperatingAndCompressorIsActiveTo(climate::CLIMATE_ACTION_DRYING);
         this->setActionIfOperatingTo(climate::CLIMATE_ACTION_DRYING);
         break;
     case climate::CLIMATE_MODE_FAN_ONLY:
@@ -568,21 +499,12 @@ void CN105Climate::updateAction() {
 }
 
 climate::ClimateTraits CN105Climate::traits() {
-    //ESP_LOGD(LOG_SETTINGS_TAG, "traits() called (dual: %d)", traits_.get_supports_two_point_target_temperature());
     return traits_;
 }
 
-
-/**
- * Modify our supported traits.
- *
- * Returns:
- *   A reference to this class' supported climate::ClimateTraits.
- */
 climate::ClimateTraits& CN105Climate::config_traits() {
     return traits_;
 }
-
 
 void CN105Climate::setModeSetting(const char* setting) {
     int index = lookupByteMapIndex(MODE_MAP, 5, setting);

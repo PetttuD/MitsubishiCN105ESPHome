@@ -23,13 +23,12 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart) :
         [this]() { this->terminateCycle(); },
         // context_callback: retourne this pour les callbacks canSend et onResponse
         [this]() -> CN105Climate* { return this; }
-    ) {
+    ) // Declare supported climate features (ESPHome 2025+ API)
+    this->traits_.set_supports_action(true);
+    this->traits_.set_supports_current_temperature(true);
+    this->traits_.set_supports_cool_target_temperature(true);
+    this->traits_.set_supports_heat_target_temperature(true);
 
-    // Active les flags de fonctionnalités via l'API moderne (évite les setters dépréciés)
-    this->traits_.add_feature_flags(
-        climate::CLIMATE_SUPPORTS_ACTION |
-        climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE
-    );
     // supports_two_point_target_temperature sera défini dans setup() selon les modes supportés
     this->traits_.set_visual_min_temperature(ESPMHP_MIN_TEMPERATURE);
     this->traits_.set_visual_max_temperature(ESPMHP_MAX_TEMPERATURE);

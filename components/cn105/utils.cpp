@@ -157,7 +157,7 @@ void CN105Climate::debugSettings(const char* settingName, wantedHeatpumpSettings
 }
 
 float CN105Climate::getTargetTemperatureInCurrentMode() {
-    if (this->traits_.has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+    if (this->traits_.get_supports_two_point_target_temperature()) {
         if (this->mode == climate::CLIMATE_MODE_HEAT) {
             return this->getTargetTemperatureLow();
         } else if (this->mode == climate::CLIMATE_MODE_COOL) {
@@ -205,7 +205,7 @@ void CN105Climate::setCurrentTemperature(float temperature) {
 }
 
 void CN105Climate::sanitizeDualSetpoints() {
-    if (!this->traits_.has_feature_flags(climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
+    if (!this->traits_.get_supports_two_point_target_temperature()) {
         return;
     }
     ESP_LOGD(LOG_DUAL_SP_TAG, "sanitizing dual setpoints...");

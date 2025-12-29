@@ -1,4 +1,3 @@
-
 #include "cn105.h"
 #ifdef USE_ESP32
 #include <driver/uart.h>
@@ -8,7 +7,6 @@
 #endif
 
 using namespace esphome;
-
 
 CN105Climate::CN105Climate(uart::UARTComponent* uart) :
     UARTDevice(uart),
@@ -23,17 +21,20 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart) :
         [this]() { this->terminateCycle(); },
         // context_callback: retourne this pour les callbacks canSend et onResponse
         [this]() -> CN105Climate* { return this; }
-    ) // Declare supported climate features (ESPHome 2025+ API)
+    ) {
+
+    // ✅ ESPHome-yhteensopiva tapa: älä käytä feature_flags-APIa (puuttuu sun buildissä)
     this->traits_.set_supports_action(true);
     this->traits_.set_supports_current_temperature(true);
-    this->traits_.set_supports_cool_target_temperature(true);
-    this->traits_.set_supports_heat_target_temperature(true);
 
-    // supports_two_point_target_temperature sera défini dans setup() selon les modes supportés
+    // Huom: jos haluat dual setpoint (low/high) näkyviin HA:ssa,
+    // tämä pitää asettaa true joko tässä tai setup():ssa.
+    // this->traits_.set_supports_two_point_target_temperature(true);
+
+    // Visual traits
     this->traits_.set_visual_min_temperature(ESPMHP_MIN_TEMPERATURE);
     this->traits_.set_visual_max_temperature(ESPMHP_MAX_TEMPERATURE);
     this->traits_.set_visual_temperature_step(ESPMHP_TEMPERATURE_STEP);
-
 
     this->isUARTConnected_ = false;
     this->tempMode = false;
@@ -107,7 +108,7 @@ void CN105Climate::registerInfoRequests() {
     r_hvac_opts.canSend = [this](const CN105Climate& self) {
         (void)self;
         return (this->air_purifier_switch_ != nullptr || this->night_mode_switch_ != nullptr || this->circulator_switch_ != nullptr);
-        };
+    };
     r_hvac_opts.onResponse = [this](CN105Climate& self) { (void)self; this->getHVACOptionsFromResponsePacket(); };
     scheduler_.register_request(r_hvac_opts);
 
@@ -129,12 +130,10 @@ void CN105Climate::registerHardwareSettingsRequests() {
         ESP_LOGI(LOG_FUNCTIONS_TAG, "Registering function settings requests (0x20/0x22) with interval %u ms", this->hardware_settings_interval_ms_);
         uint32_t interval = this->hardware_settings_interval_ms_;
 
-        // Helper Lambda : Vérifie l'incompatibilité et désactive tout si nécessaire
         auto check_and_disable = [](CN105Climate& self, uint8_t code) -> bool {
             if (self.data[0] != code) return false;
 
             bool all_zeros = true;
-            // Masque 0x03 pour vérifier uniquement la valeur (bits de poids faible)
             for (int i = 1; i < self.dataLength; i++) {
                 if ((self.data[i] & 0x03) != 0) {
                     all_zeros = false;
@@ -145,10 +144,8 @@ void CN105Climate::registerHardwareSettingsRequests() {
             if (all_zeros) {
                 ESP_LOGW(LOG_FUNCTIONS_TAG, "Response 0x%02X contains only zeros (value bits). Feature not supported by unit. Disabling.", code);
 
-                // 1. Désactiver la requête via le scheduler
                 self.scheduler_.disable_request(code);
 
-                // 2. Marquer les composants graphiques comme "Failed" (Unavailable)
                 ESP_LOGD(LOG_FUNCTIONS_TAG, "Marking Hardware Setting Selects as failed.");
                 for (auto* setting : self.hardware_settings_) {
                     setting->set_enabled(false);
@@ -157,9 +154,8 @@ void CN105Climate::registerHardwareSettingsRequests() {
                 return false;
             }
             return true;
-            };
+        };
 
-        // --- Part 1 (0x20) ---
         InfoRequest r_funcs1("functions1", "Functions Part 1", 0x20, 3, 0, interval, LOG_FUNCTIONS_TAG);
         r_funcs1.onResponse = [this, check_and_disable](CN105Climate& self) {
             if (check_and_disable(self, 0x20)) {
@@ -168,10 +164,9 @@ void CN105Climate::registerHardwareSettingsRequests() {
                 self.functions.setData1(&self.data[1]);
                 ESP_LOGD(LOG_FUNCTIONS_TAG, "Got functions packet 1 (via InfoRequest)");
             }
-            };
+        };
         scheduler_.register_request(r_funcs1);
 
-        // --- Part 2 (0x22) ---
         InfoRequest r_funcs2("functions2", "Functions Part 2", 0x22, 3, 0, interval, LOG_FUNCTIONS_TAG);
         r_funcs2.onResponse = [this, check_and_disable](CN105Climate& self) {
             if (check_and_disable(self, 0x22)) {
@@ -181,18 +176,13 @@ void CN105Climate::registerHardwareSettingsRequests() {
                 ESP_LOGD(LOG_FUNCTIONS_TAG, "Got functions packet 2 (via InfoRequest)");
                 self.functionsArrived();
             }
-            };
+        };
         scheduler_.register_request(r_funcs2);
 
     } else {
         ESP_LOGD(LOG_FUNCTIONS_TAG, "No hardware settings configured in YAML, skipping 0x20/0x22 requests");
     }
 }
-
-// Les méthodes sendInfoRequest, markResponseSeenFor, sendNextAfter et processInfoResponse
-// ont été déplacées dans RequestScheduler pour respecter le principe de responsabilité unique (SRP).
-
-
 
 void CN105Climate::set_baud_rate(int baud) {
     this->baud_ = baud;
@@ -203,14 +193,13 @@ void CN105Climate::set_tx_rx_pins(int tx_pin, int rx_pin) {
     this->tx_pin_ = tx_pin;
     this->rx_pin_ = rx_pin;
     ESP_LOGI(TAG, "setting tx_pin: %d rx_pin: %d", tx_pin, rx_pin);
-
 }
 
 void CN105Climate::pingExternalTemperature() {
     this->set_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT, this->remote_temp_timeout_, [this]() {
         ESP_LOGW(LOG_REMOTE_TEMP, "Remote temperature timeout occured, fall back to internal temperature!");
         this->set_remote_temperature(0);
-        });
+    });
 }
 
 void CN105Climate::set_remote_temp_timeout(uint32_t timeout) {
@@ -218,16 +207,13 @@ void CN105Climate::set_remote_temp_timeout(uint32_t timeout) {
     if (timeout == 4294967295) {
         ESP_LOGI(LOG_REMOTE_TEMP, "set_remote_temp_timeout is set to never.");
     } else {
-        //ESP_LOGI(LOG_ACTION_EVT_TAG, "set_remote_temp_timeout is set to %lu", timeout);
         log_info_uint32(LOG_REMOTE_TEMP, "set_remote_temp_timeout is set to ", timeout);
-
         this->pingExternalTemperature();
     }
 }
 
 void CN105Climate::set_debounce_delay(uint32_t delay) {
     this->debounce_delay_ = delay;
-    //ESP_LOGI(LOG_ACTION_EVT_TAG, "set_debounce_delay is set to %lu", delay);
     log_info_uint32(LOG_ACTION_EVT_TAG, "set_debounce_delay is set to ", delay);
 }
 
@@ -263,7 +249,6 @@ void CN105Climate::setupUART() {
     this->setHeatpumpConnected(false);
     this->isUARTConnected_ = false;
 
-    // just for debugging purpose, a way to use a button i, yaml to trigger a reconnect
     this->uart_setup_switch = true;
 
     if (this->parent_->get_data_bits() == 8 &&
@@ -290,15 +275,13 @@ void CN105Climate::setHeatpumpConnected(bool state) {
         }
     }
 }
+
 void CN105Climate::disconnectUART() {
     ESP_LOGD(TAG, "disconnectUART()");
     this->uart_setup_switch = false;
     this->setHeatpumpConnected(false);
-    //this->isHeatpumpConnected_ = false;
-    //this->isUARTConnected_ = false;
     this->firstRun = true;
     this->publish_state();
-
 }
 
 void CN105Climate::reconnectUART() {
@@ -309,7 +292,6 @@ void CN105Climate::reconnectUART() {
     this->setupUART();
     this->sendFirstConnectionPacket();
 }
-
 
 void CN105Climate::reconnectIfConnectionLost() {
 
@@ -330,23 +312,13 @@ void CN105Climate::reconnectIfConnectionLost() {
     }
 }
 
-
 bool CN105Climate::isHeatpumpConnectionActive() {
     long lrTimeMs = CUSTOM_MILLIS - this->lastResponseMs;
-
-    // if (lrTimeMs > MAX_DELAY_RESPONSE_FACTOR * this->update_interval_) {
-    //     ESP_LOGV(TAG, "Heatpump has not replied for %ld s", lrTimeMs / 1000);
-    //     ESP_LOGV(TAG, "We think Heatpump is not connected anymore..");
-    //     this->disconnectUART();
-    // }
-
     return  (lrTimeMs < MAX_DELAY_RESPONSE_FACTOR * this->update_interval_);
 }
 
 void CN105Climate::force_low_level_uart_reinit() {
 #ifdef USE_ESP32
-    // Réinit basse couche: reconfigurer le contrôleur utilisé par UARTComponent
-    // On utilise le port passé par set_uart_port (fallback UART0 si inconnu)
     const uart_port_t port = (this->uart_port_ == 1) ? UART_NUM_1 :
 #ifdef UART_NUM_2
     (this->uart_port_ == 2) ? UART_NUM_2 :
@@ -355,13 +327,10 @@ void CN105Climate::force_low_level_uart_reinit() {
 
     ESP_LOGI(TAG, "Forcing low-level UART reinit on port %d (tx=%d, rx=%d)", (int)port, this->tx_pin_, this->rx_pin_);
 
-    // IMPORTANT: ne pas supprimer/réinstaller le driver ici pour éviter conflit avec UARTComponent
-    // On reconfigure in-place et on assainit les GPIO
     if (this->tx_pin_ >= 0) gpio_reset_pin((gpio_num_t)this->tx_pin_);
     if (this->rx_pin_ >= 0) gpio_reset_pin((gpio_num_t)this->rx_pin_);
     CUSTOM_DELAY(2);
 
-    // Paramètres SERIAL_8E1 @ 2400 bauds (valeurs issues de la config UARTComponent)
     uart_config_t cfg = {};
     cfg.baud_rate = this->parent_ ? (int)this->parent_->get_baud_rate() : 2400;
     cfg.data_bits = UART_DATA_8_BITS;
@@ -372,7 +341,6 @@ void CN105Climate::force_low_level_uart_reinit() {
 
     uart_param_config(port, &cfg);
 
-    // Reconfigurer les pins si connues; sinon GPIO1/2 (Atom S3 yaml)
     int tx = (this->tx_pin_ >= 0) ? this->tx_pin_ : 1;
     int rx = (this->rx_pin_ >= 0) ? this->rx_pin_ : 2;
     esp_err_t pin_err = uart_set_pin(port, (gpio_num_t)tx, (gpio_num_t)rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
@@ -380,38 +348,26 @@ void CN105Climate::force_low_level_uart_reinit() {
         ESP_LOGE(TAG, "uart_set_pin failed: %s", esp_err_to_name(pin_err));
     }
 
-    // RX idle high: assurer un pull-up (utile à bas débit/8E1)
     if (this->rx_pin_ >= 0) {
         gpio_set_pull_mode((gpio_num_t)this->rx_pin_, GPIO_PULLUP_ONLY);
     }
 
-    // S'assurer du mode UART classique
     uart_set_mode(port, UART_MODE_UART);
-
-    // Attendre que toute TX en cours finisse (si driver déjà installé)
     uart_wait_tx_done(port, pdMS_TO_TICKS(20));
 
-    // Fixer la source d'horloge UART (bas débits peuvent être sensibles)
 #if defined(UART_SCLK_XTAL)
     uart_set_sclk(port, UART_SCLK_XTAL);
 #elif defined(UART_SCLK_APB)
     uart_set_sclk(port, UART_SCLK_APB);
 #endif
-    // Re-forcer explicitement le baud après sclk
-    uart_set_baudrate(port, cfg.baud_rate);
 
-    // Assainir inversion/flow control
+    uart_set_baudrate(port, cfg.baud_rate);
     uart_set_line_inverse(port, UART_SIGNAL_INV_DISABLE);
     uart_set_hw_flow_ctrl(port, UART_HW_FLOWCTRL_DISABLE, 0);
-
-    // Timeout RX court pour vider rapidement
     uart_set_rx_timeout(port, 2);
-
-    // Purger les buffers pour éviter les résidus
     uart_flush_input(port);
     CUSTOM_DELAY(2);
 
-    // Diagnostics
     uint32_t eff_baud = 0;
     uart_get_baudrate(port, &eff_baud);
     ESP_LOGD(TAG, "UART effective baud=%lu tx_pin=%d rx_pin=%d", (unsigned long)eff_baud, this->tx_pin_, this->rx_pin_);
